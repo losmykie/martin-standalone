@@ -1,0 +1,126 @@
+{% extends "layout.html" %}
+
+{% block title %}Chat - AWS Bedrock Chat{% endblock %}
+
+{% block content %}
+<div class="container-fluid h-100">
+    <div class="row h-100">
+        <!-- Sidebar with chat history -->
+        <div class="col-md-3 col-lg-2 d-md-block bg-light chat-sidebar p-0">
+            <div class="d-flex justify-content-between align-items-center p-3 border-bottom">
+                <h5 class="mb-0">Chats</h5>
+                <a href="{{ url_for('new_chat') }}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-lg"></i> New
+                </a>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for session in chat_sessions %}
+                <a href="{{ url_for('chat', chat_id=session.id, model_id=selected_model.id if selected_model else None) }}" 
+                   class="list-group-item list-group-item-action {% if session.id == chat_session.id %}active{% endif %}">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div class="sidebar-chat-item">
+                            <i class="bi bi-chat-left-text"></i>
+                            {{ session.title }}
+                        </div>
+                        {% if session.id == chat_session.id %}
+                        <form method="POST" action="{{ url_for('delete_chat', chat_id=session.id) }}" 
+                              onsubmit="return confirm('Are you sure you want to delete this chat?');" class="d-inline">
+                            <button type="submit" class="btn btn-sm btn-link text-danger p-0">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </div>
+                    <small class="text-muted">{{ session.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Main chat area -->
+        <div class="col-md-9 col-lg-10 ms-sm-auto px-md-4">
+            <div class="chat-container">
+                <!-- Model selection dropdown -->
+                <div class="p-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">{{ chat_session.title }}</h5>
+                        <div class="dropdown">
+                            <button class="btn btn-outline-secondary dropdown-toggle" type="button" id="modelDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                                {{ selected_model.name if selected_model else 'Select Model' }}
+                            </button>
+                            <ul class="dropdown-menu" aria-labelledby="modelDropdown">
+                                {% for model in models %}
+                                <li>
+                                    <a class="dropdown-item {% if selected_model and model.id == selected_model.id %}active{% endif %}" 
+                                       href="{{ url_for('chat', chat_id=chat_session.id, model_id=model.id) }}">
+                                        {{ model.name }}
+                                        {% if model.is_default %}<span class="badge bg-primary ms-2">Default</span>{% endif %}
+                                    </a>
+                                </li>
+                                {% endfor %}
+                                <li><hr class="dropdown-divider"></li>
+                                <li><a class="dropdown-item" href="{{ url_for('models') }}">Manage Models</a></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat messages -->
+                <div class="chat-messages d-flex flex-column">
+                    {% for message in chat_session.messages %}
+                    <div class="{% if message.role == 'user' %}user-message align-self-end{% else %}assistant-message align-self-start{% endif %} mb-3">
+                        <div class="mb-1">
+                            <strong>{{ 'You' if message.role == 'user' else 'Assistant' }}</strong>
+                            <small class="text-muted ms-2">{{ message.timestamp.strftime('%H:%M') }}</small>
+                        </div>
+                        <div class="message-content">
+                            {{ message.content|safe|nl2br }}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Chat input -->
+                <div class="chat-input">
+                    <form method="POST" action="{{ url_for('chat', chat_id=chat_session.id, model_id=selected_model.id if selected_model else None) }}">
+                        {{ form.hidden_tag() }}
+                        <div class="mb-3">
+                            {{ form.message(class="form-control", rows="3", placeholder="Type your message here...") }}
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">
+                                Using: {{ selected_model.name if selected_model else 'Default Model' }}
+                            </small>
+                            {{ form.submit(class="btn btn-primary") }}
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Auto-scroll to bottom of chat messages
+    document.addEventListener('DOMContentLoaded', function() {
+        const chatMessages = document.querySelector('.chat-messages');
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    });
+
+    // Add syntax highlighting for code blocks
+    document.addEventListener('DOMContentLoaded', function() {
+        const messageContents = document.querySelectorAll('.message-content');
+        messageContents.forEach(content => {
+            // Simple code block detection and formatting
+            let html = content.innerHTML;
+            // Replace ```code``` blocks with <pre><code>code</code></pre>
+            html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+            // Replace `inline code` with <code>inline code</code>
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+            content.innerHTML = html;
+        });
+    });
+</script>
+{% endblock %}
