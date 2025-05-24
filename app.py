@@ -312,7 +312,6 @@ def get_bedrock_response(prompt, message_history, selected_model):
         return response_body.get('completion', 'No response')
 
 # Initialize the database and create admin user
-@app.before_first_request
 def initialize_app():
     db.create_all()
     
@@ -337,6 +336,10 @@ def initialize_app():
         )
         db.session.add(default_model)
         db.session.commit()
+
+# Initialize the app when it starts
+with app.app_context():
+    initialize_app()
 
 # For local development
 if __name__ == '__main__':
