@@ -1,0 +1,60 @@
+/* Custom styles for AWS Bedrock Chat */
+
+/* Markdown rendering in chat messages */
+.message-content pre {
+    background-color: #f8f9fa;
+    padding: 1rem;
+    border-radius: 0.25rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+}
+
+.message-content code {
+    color: #d63384;
+    background-color: rgba(0, 0, 0, 0.05);
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.25rem;
+}
+
+.message-content pre code {
+    color: inherit;
+    background-color: transparent;
+    padding: 0;
+}
+
+/* Improve chat message styling */
+.user-message, .assistant-message {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.user-message {
+    background-color: #e3f2fd;
+}
+
+.assistant-message {
+    background-color: #f8f9fa;
+}
+
+/* Improve sidebar styling */
+.chat-sidebar {
+    background-color: #f8f9fa;
+}
+
+.chat-sidebar .list-group-item.active {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .chat-sidebar {
+        height: auto;
+        max-height: 200px;
+        overflow-y: auto;
+        margin-bottom: 1rem;
+    }
+    
+    .chat-container {
+        height: calc(100vh - 300px);
+    }
+}
