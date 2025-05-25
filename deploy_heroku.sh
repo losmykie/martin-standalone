@@ -23,6 +23,7 @@ read -p "Enter your Heroku app name (leave blank to create a random name): " app
 if [ -z "$app_name" ]; then
     echo "Creating Heroku app with random name..."
     heroku create
+    app_name=$(heroku apps:info --json | jq -r '.app.name')
 else
     echo "Creating Heroku app: $app_name"
     heroku create $app_name
@@ -33,28 +34,36 @@ echo "Setting up environment variables..."
 
 # Generate random secret key
 secret_key=$(openssl rand -hex 16)
-heroku config:set SECRET_KEY=$secret_key
+heroku config:set SECRET_KEY=$secret_key --app $app_name
 
 # AWS credentials
 read -p "Enter your AWS Access Key ID: " aws_access_key
 read -p "Enter your AWS Secret Access Key: " aws_secret_key
-heroku config:set AWS_ACCESS_KEY_ID=$aws_access_key
-heroku config:set AWS_SECRET_ACCESS_KEY=$aws_secret_key
+heroku config:set AWS_ACCESS_KEY_ID=$aws_access_key --app $app_name
+heroku config:set AWS_SECRET_ACCESS_KEY=$aws_secret_key --app $app_name
 
 # Admin credentials
 read -p "Enter admin username (default: admin): " admin_username
 admin_username=${admin_username:-admin}
 read -s -p "Enter admin password: " admin_password
 echo ""
-heroku config:set ADMIN_USERNAME=$admin_username
-heroku config:set ADMIN_PASSWORD=$admin_password
+heroku config:set ADMIN_USERNAME=$admin_username --app $app_name
+heroku config:set ADMIN_PASSWORD=$admin_password --app $app_name
+
+# Add PostgreSQL addon
+echo "Adding PostgreSQL database..."
+heroku addons:create heroku-postgresql:mini --app $app_name
 
 # Deploy to Heroku
 echo "Deploying to Heroku..."
 git push heroku main
 
+# Run database initialization script
+echo "Initializing database..."
+heroku run python init_db.py --app $app_name
+
 # Open the app
-heroku open
+heroku open --app $app_name
 
 echo ""
 echo "Deployment complete! Your app is now running on Heroku."

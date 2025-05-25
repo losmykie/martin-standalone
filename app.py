@@ -18,12 +18,20 @@ load_dotenv()
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(16))
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///bedrock_chat.db')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# If DATABASE_URL is provided by Heroku (postgres), adjust it for SQLAlchemy
-if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql://', 1)
+# Get the database URL from environment variables
+database_url = os.environ.get('DATABASE_URL')
+
+# If no DATABASE_URL is provided, use SQLite
+if not database_url:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bedrock_chat.db'
+else:
+    # If DATABASE_URL is provided by Heroku (postgres), adjust it for SQLAlchemy
+    if database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize database
 db = SQLAlchemy(app)
@@ -313,48 +321,26 @@ def get_bedrock_response(prompt, message_history, selected_model):
 
 # Initialize the database and create admin user
 def initialize_app():
-    db.create_all()
-    
-    # Create admin user if it doesn't exist
-    admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-    admin_password = os.environ.get('ADMIN_PASSWORD')
-    
-    if admin_password:
-        admin = User.query.filter_by(username=admin_username).first()
-        if not admin:
-            admin = User(username=admin_username)
-            admin.set_password(admin_password)
-            db.session.add(admin)
-            db.session.commit()
-    
-    # Add default model if no models exist
-    if Model.query.count() == 0:
-        default_model = Model(
-            name=DEFAULT_MODEL_NAME,
-            model_arn=DEFAULT_MODEL,
-            is_default=True
-        )
-        db.session.add(default_model)
-        db.session.commit()
-
-# Initialize the app when it starts
-with app.app_context():
-    initialize_app()
-
-# For local development
-if __name__ == '__main__':
-    with app.app_context():
+    try:
+        # Create tables if they don't exist
         db.create_all()
+        
         # Create admin user if it doesn't exist
         admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-        admin_password = os.environ.get('ADMIN_PASSWORD', 'password')  # Default for local dev only
+        admin_password = os.environ.get('ADMIN_PASSWORD')
         
-        admin = User.query.filter_by(username=admin_username).first()
-        if not admin:
-            admin = User(username=admin_username)
-            admin.set_password(admin_password)
-            db.session.add(admin)
-            
+        if admin_password:
+            admin = User.query.filter_by(username=admin_username).first()
+            if not admin:
+                admin = User(username=admin_username)
+                admin.set_password(admin_password)
+                db.session.add(admin)
+                try:
+                    db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    app.logger.error(f"Error creating admin user: {str(e)}")
+        
         # Add default model if no models exist
         if Model.query.count() == 0:
             default_model = Model(
@@ -363,7 +349,68 @@ if __name__ == '__main__':
                 is_default=True
             )
             db.session.add(default_model)
+            try:
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                app.logger.error(f"Error creating default model: {str(e)}")
+    
+    except Exception as e:
+        app.logger.error(f"Database initialization error: {str(e)}")
+
+# Create a function to initialize the app
+def init_app(app):
+    with app.app_context():
+        try:
+            initialize_app()
+        except Exception as e:
+            app.logger.error(f"Application initialization error: {str(e)}")
+
+# Register the initialization function to run after the first request
+# This is compatible with newer Flask versions (2.0+)
+@app.after_request
+def after_request(response):
+    # Use a flag in the app config to ensure we only run initialization once
+    if not app.config.get('DB_INITIALIZED', False):
+        init_app(app)
+        app.config['DB_INITIALIZED'] = True
+    return response
+
+# For local development
+if __name__ == '__main__':
+    # Initialize the database directly for local development
+    with app.app_context():
+        try:
+            # Create tables
+            db.create_all()
             
-        db.session.commit()
-        
+            # Create admin user if it doesn't exist
+            admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+            admin_password = os.environ.get('ADMIN_PASSWORD', 'password')  # Default for local dev only
+            
+            admin = User.query.filter_by(username=admin_username).first()
+            if not admin:
+                admin = User(username=admin_username)
+                admin.set_password(admin_password)
+                db.session.add(admin)
+                
+            # Add default model if no models exist
+            if Model.query.count() == 0:
+                default_model = Model(
+                    name=DEFAULT_MODEL_NAME,
+                    model_arn=DEFAULT_MODEL,
+                    is_default=True
+                )
+                db.session.add(default_model)
+                
+            db.session.commit()
+            
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Local development initialization error: {str(e)}")
+    
+    # Set the flag to avoid re-initialization via after_request
+    app.config['DB_INITIALIZED'] = True
+    
+    # Run the app
     app.run(debug=True)

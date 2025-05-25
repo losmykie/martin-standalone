@@ -1,7 +1,7 @@
 import os
 import unittest
 import tempfile
-from app import app, db, User, Model
+from app import app, db, User, Model, initialize_app
 
 class AppTestCase(unittest.TestCase):
     def setUp(self):
@@ -74,6 +74,44 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Available Models', response.data)
         self.assertIn(b'Test Model', response.data)
+    
+    def test_database_initialization(self):
+        """Test database initialization function"""
+        # Create a new test database
+        fd, db_path = tempfile.mkstemp()
+        test_uri = 'sqlite:///' + db_path
+        
+        # Configure app to use the test database
+        original_uri = app.config['SQLALCHEMY_DATABASE_URI']
+        app.config['SQLALCHEMY_DATABASE_URI'] = test_uri
+        
+        try:
+            with app.app_context():
+                # Reset the database
+                db.drop_all()
+                db.create_all()
+                
+                # Set environment variables for testing
+                os.environ['ADMIN_USERNAME'] = 'testadmin'
+                os.environ['ADMIN_PASSWORD'] = 'testpassword'
+                
+                # Run the initialization function
+                initialize_app()
+                
+                # Check if admin user was created
+                admin = User.query.filter_by(username='testadmin').first()
+                self.assertIsNotNone(admin)
+                self.assertTrue(admin.check_password('testpassword'))
+                
+                # Check if default model was created
+                model = Model.query.filter_by(is_default=True).first()
+                self.assertIsNotNone(model)
+                
+        finally:
+            # Restore original database URI
+            app.config['SQLALCHEMY_DATABASE_URI'] = original_uri
+            os.close(fd)
+            os.unlink(db_path)
 
 if __name__ == '__main__':
     unittest.main()
