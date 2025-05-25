@@ -33,6 +33,11 @@ login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
+# Add datetime to all templates
+@app.context_processor
+def inject_now():
+    return {'now': datetime.utcnow()}
+
 # AWS Configuration
 AWS_REGION = 'us-east-1'
 DEFAULT_MODEL = 'anthropic.claude-3-5-sonnet-20240620-v1:0'  # Claude 3.5 Sonnet
