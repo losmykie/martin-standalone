@@ -313,7 +313,14 @@ def get_bedrock_response(prompt, message_history, selected_model):
 
 # Initialize the database and create admin user
 def initialize_app():
-    db.create_all()
+    # Check if tables exist before creating them
+    from sqlalchemy import inspect
+    inspector = inspect(db.engine)
+    existing_tables = inspector.get_table_names()
+    
+    # Only create tables if they don't exist
+    if not existing_tables:
+        db.create_all()
     
     # Create admin user if it doesn't exist
     admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
@@ -344,7 +351,15 @@ with app.app_context():
 # For local development
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
+        # Check if tables exist before creating them
+        from sqlalchemy import inspect
+        inspector = inspect(db.engine)
+        existing_tables = inspector.get_table_names()
+        
+        # Only create tables if they don't exist
+        if not existing_tables:
+            db.create_all()
+            
         # Create admin user if it doesn't exist
         admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
         admin_password = os.environ.get('ADMIN_PASSWORD', 'password')  # Default for local dev only
