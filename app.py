@@ -324,32 +324,44 @@ def initialize_app():
         admin_password = os.environ.get('ADMIN_PASSWORD')
         
         if admin_password:
-            admin = User.query.filter_by(username=admin_username).first()
-            if not admin:
-                admin = User(username=admin_username)
-                admin.set_password(admin_password)
-                db.session.add(admin)
+            try:
+                admin = User.query.filter_by(username=admin_username).first()
+                if not admin:
+                    admin = User(username=admin_username)
+                    admin.set_password(admin_password)
+                    db.session.add(admin)
+                    db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                app.logger.error(f"Error creating admin user: {str(e)}")
+        
+        # Add default model if no models exist
+        try:
+            model_exists = db.session.query(Model).first() is not None
+            if not model_exists:
+                default_model = Model(
+                    name=DEFAULT_MODEL_NAME,
+                    model_arn=DEFAULT_MODEL,
+                    is_default=True
+                )
+                db.session.add(default_model)
                 db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"Error creating default model: {str(e)}")
     except Exception as e:
-        app.logger.error(f"Error initializing app: {str(e)}")
-    
-    # Add default model if no models exist
-    if Model.query.count() == 0:
-        default_model = Model(
-            name=DEFAULT_MODEL_NAME,
-            model_arn=DEFAULT_MODEL,
-            is_default=True
-        )
-        db.session.add(default_model)
-        db.session.commit()
+        app.logger.error(f"Error in initialize_app: {str(e)}")
 
 # Initialize the app when it starts
 with app.app_context():
     try:
         db.create_all()
-    except:
+    except Exception as e:
         # Tables may already exist
-        pass
+        app.logger.warning(f"Could not create tables: {str(e)}")
+    
+    # Reset the session to clear any errors
+    db.session.remove()
     initialize_app()
 
 # For local development
