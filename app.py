@@ -318,22 +318,20 @@ def get_bedrock_response(prompt, message_history, selected_model):
 
 # Initialize the database and create admin user
 def initialize_app():
-    # Check if tables exist before creating them
-    inspector = db.inspect(db.engine)
-    if not inspector.has_table('user'):
-        db.create_all()
-    
-    # Create admin user if it doesn't exist
-    admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-    admin_password = os.environ.get('ADMIN_PASSWORD')
-    
-    if admin_password:
-        admin = User.query.filter_by(username=admin_username).first()
-        if not admin:
-            admin = User(username=admin_username)
-            admin.set_password(admin_password)
-            db.session.add(admin)
-            db.session.commit()
+    try:
+        # Create admin user if it doesn't exist
+        admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
+        admin_password = os.environ.get('ADMIN_PASSWORD')
+        
+        if admin_password:
+            admin = User.query.filter_by(username=admin_username).first()
+            if not admin:
+                admin = User(username=admin_username)
+                admin.set_password(admin_password)
+                db.session.add(admin)
+                db.session.commit()
+    except Exception as e:
+        app.logger.error(f"Error initializing app: {str(e)}")
     
     # Add default model if no models exist
     if Model.query.count() == 0:
@@ -347,6 +345,11 @@ def initialize_app():
 
 # Initialize the app when it starts
 with app.app_context():
+    try:
+        db.create_all()
+    except:
+        # Tables may already exist
+        pass
     initialize_app()
 
 # For local development
