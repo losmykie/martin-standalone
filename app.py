@@ -340,9 +340,10 @@ def initialize_app():
         db.session.add(default_model)
         db.session.commit()
 
-# Initialize the app when it starts
-with app.app_context():
-    initialize_app()
+# Initialize the app when it starts - only in development
+if __name__ == '__main__':
+    with app.app_context():
+        initialize_app()
 
 # For local development
 if __name__ == '__main__':
