@@ -11,6 +11,7 @@ class AppTestCase(unittest.TestCase):
         app.config['WTF_CSRF_ENABLED'] = False
         self.client = app.test_client()
         with app.app_context():
+            # Ensure tables are created for testing
             db.create_all()
             # Create test user
             test_user = User(username='testuser')
@@ -74,6 +75,27 @@ class AppTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'Available Models', response.data)
         self.assertIn(b'Test Model', response.data)
+        
+    def test_database_initialization(self):
+        """Test that database initialization works correctly"""
+        with app.app_context():
+            # Drop all tables
+            db.drop_all()
+            
+            # Initialize app (this should recreate tables)
+            from app import initialize_app
+            initialize_app()
+            
+            # Check that tables exist
+            from sqlalchemy import inspect
+            inspector = inspect(db.engine)
+            tables = inspector.get_table_names()
+            
+            # Verify essential tables exist
+            self.assertIn('user', tables)
+            self.assertIn('model', tables)
+            self.assertIn('chat_session', tables)
+            self.assertIn('message', tables)
 
 if __name__ == '__main__':
     unittest.main()
