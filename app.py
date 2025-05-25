@@ -370,6 +370,13 @@ with app.app_context():
     db.session.remove()
     initialize_app()
 
+# Debug route to check users (remove in production)
+@app.route('/debug/users')
+def debug_users():
+    users = User.query.all()
+    result = [{'id': user.id, 'username': user.username} for user in users]
+    return {'users': result}
+
 # For local development
 if __name__ == '__main__':
     with app.app_context():
