@@ -38,6 +38,12 @@ login_manager.login_view = 'login'
 def inject_now():
     return {'now': datetime.utcnow()}
 
+# Add nl2br filter to convert newlines to <br>
+@app.template_filter('nl2br')
+def nl2br(value):
+    if value:
+        return value.replace('\n', '<br>')
+
 # AWS Configuration
 AWS_REGION = 'us-east-1'
 DEFAULT_MODEL = 'anthropic.claude-3-5-sonnet-20240620-v1:0'  # Claude 3.5 Sonnet
