@@ -1,58 +1,32 @@
 import os
-import json
-import boto3
-import secrets
-from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, session
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, SubmitField, TextAreaField
-from wtforms.validators import DataRequired, Length
-from dotenv import load_dotenv
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+import boto3
+import json
+import logging
 
-# Load environment variables from .env file if present (for local development)
-load_dotenv()
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', secrets.token_hex(16))
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///bedrock_chat.db')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'default-dev-key')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///bedrock_chat.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# If DATABASE_URL is provided by Heroku (postgres), adjust it for SQLAlchemy
-if app.config['SQLALCHEMY_DATABASE_URI'].startswith('postgres://'):
-    app.config['SQLALCHEMY_DATABASE_URI'] = app.config['SQLALCHEMY_DATABASE_URI'].replace('postgres://', 'postgresql://', 1)
-
-# Initialize database
 db = SQLAlchemy(app)
 
-# Initialize login manager
+# Login manager setup
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Add datetime to all templates
-@app.context_processor
-def inject_now():
-    return {'now': datetime.utcnow()}
-
-# Add nl2br filter to convert newlines to <br>
-@app.template_filter('nl2br')
-def nl2br(value):
-    if value:
-        return value.replace('\n', '<br>')
-
-# AWS Configuration
-AWS_REGION = 'us-east-1'
-DEFAULT_MODEL = 'anthropic.claude-3-5-sonnet-20240620-v1:0'  # Claude 3.5 Sonnet
-DEFAULT_MODEL_NAME = 'Claude 3.5 Sonnet'
-
-# Database Models
+# Database models
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
+    username = db.Column(db.String(100), unique=True, nullable=False)
     password_hash = db.Column(db.String(200), nullable=False)
     
     def set_password(self, password):
@@ -74,32 +48,46 @@ class Message(db.Model):
     role = db.Column(db.String(10), nullable=False)  # 'user' or 'assistant'
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-    model_id = db.Column(db.Integer, db.ForeignKey('model.id'))
 
 class Model(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     model_arn = db.Column(db.String(200), nullable=False)
     is_default = db.Column(db.Boolean, default=False)
-    
-# Forms
-class LoginForm(FlaskForm):
-    username = StringField('Username', validators=[DataRequired()])
-    password = PasswordField('Password', validators=[DataRequired()])
-    submit = SubmitField('Login')
-
-class ChatForm(FlaskForm):
-    message = TextAreaField('Message', validators=[DataRequired()])
-    submit = SubmitField('Send')
-
-class ModelForm(FlaskForm):
-    name = StringField('Model Name', validators=[DataRequired(), Length(min=1, max=100)])
-    model_arn = StringField('Model ARN', validators=[DataRequired(), Length(min=1, max=200)])
-    submit = SubmitField('Add Model')
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
+
+# Initialize database and add default model
+with app.app_context():
+    db.create_all()
+    
+    # Add default admin user if not exists
+    if not User.query.filter_by(username='admin').first():
+        admin = User(username='admin')
+        admin.set_password(os.environ.get('ADMIN_PASSWORD', 'password'))
+        db.session.add(admin)
+    
+    # Add default Claude 4 model if not exists
+    if not Model.query.filter_by(name='Claude 4').first():
+        claude_model = Model(
+            name='Claude 4',
+            model_arn='anthropic.claude-3-sonnet-20240229-v1:0',
+            is_default=True
+        )
+        db.session.add(claude_model)
+    
+    db.session.commit()
+
+# AWS Bedrock client
+def get_bedrock_client():
+    return boto3.client(
+        service_name='bedrock-runtime',
+        region_name='us-east-1',
+        aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY')
+    )
 
 # Routes
 @app.route('/')
@@ -113,19 +101,18 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('chat'))
     
-    form = LoginForm()
-    
-    if form.validate_on_submit():
-        user = User.query.filter_by(username=form.username.data).first()
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
         
-        if user and user.check_password(form.password.data):
+        user = User.query.filter_by(username=username).first()
+        if user and user.check_password(password):
             login_user(user)
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('chat'))
+            return redirect(url_for('chat'))
         else:
-            flash('Invalid username or password', 'danger')
+            flash('Invalid username or password', 'error')
     
-    return render_template('login.html', form=form)
+    return render_template('login.html')
 
 @app.route('/logout')
 @login_required
@@ -133,273 +120,286 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-@app.route('/chat', methods=['GET', 'POST'])
+@app.route('/chat')
 @login_required
 def chat():
-    form = ChatForm()
-    
-    # Get current chat session or create a new one
-    chat_id = request.args.get('chat_id', None)
-    
-    if chat_id:
-        chat_session = ChatSession.query.filter_by(id=chat_id, user_id=current_user.id).first_or_404()
-    else:
-        chat_session = ChatSession(user_id=current_user.id)
-        db.session.add(chat_session)
-        db.session.commit()
-    
-    # Get all chat sessions for the sidebar
     chat_sessions = ChatSession.query.filter_by(user_id=current_user.id).order_by(ChatSession.created_at.desc()).all()
-    
-    # Get available models
     models = Model.query.all()
-    selected_model_id = request.args.get('model_id', None)
+    default_model = Model.query.filter_by(is_default=True).first()
     
-    if selected_model_id:
-        selected_model = Model.query.get(selected_model_id)
-    else:
-        selected_model = Model.query.filter_by(is_default=True).first()
-        if not selected_model and models:
-            selected_model = models[0]
+    active_chat_id = request.args.get('chat_id')
+    active_chat = None
+    messages = []
     
-    if form.validate_on_submit():
-        user_message = Message(
-            chat_session_id=chat_session.id,
-            role='user',
-            content=form.message.data,
-            model_id=selected_model.id if selected_model else None
-        )
-        db.session.add(user_message)
-        
-        # Update chat title if it's the first message
-        if len(chat_session.messages) == 0:
-            # Use the first few words of the first message as the title
-            title_text = form.message.data[:50] + ('...' if len(form.message.data) > 50 else '')
-            chat_session.title = title_text
-        
-        # Get response from AWS Bedrock
-        try:
-            response = get_bedrock_response(form.message.data, chat_session.messages, selected_model)
-            
-            assistant_message = Message(
-                chat_session_id=chat_session.id,
-                role='assistant',
-                content=response,
-                model_id=selected_model.id if selected_model else None
-            )
-            db.session.add(assistant_message)
-            
-        except Exception as e:
-            flash(f"Error: {str(e)}", "danger")
-            app.logger.error(f"Bedrock API error: {str(e)}")
-        
-        db.session.commit()
-        return redirect(url_for('chat', chat_id=chat_session.id, model_id=selected_model.id if selected_model else None))
+    if active_chat_id:
+        active_chat = db.session.get(ChatSession, active_chat_id)
+        if active_chat and active_chat.user_id == current_user.id:
+            messages = Message.query.filter_by(chat_session_id=active_chat_id).order_by(Message.timestamp).all()
     
-    return render_template(
-        'chat.html', 
-        form=form, 
-        chat_session=chat_session, 
-        chat_sessions=chat_sessions,
-        models=models,
-        selected_model=selected_model
-    )
+    return render_template('chat.html', 
+                          chat_sessions=chat_sessions, 
+                          active_chat=active_chat,
+                          messages=messages,
+                          models=models,
+                          default_model=default_model)
 
-@app.route('/chat/new')
+@app.route('/chat/new', methods=['GET', 'POST'])
 @login_required
 def new_chat():
-    chat_session = ChatSession(user_id=current_user.id)
-    db.session.add(chat_session)
+    chat = ChatSession(user_id=current_user.id)
+    db.session.add(chat)
     db.session.commit()
-    return redirect(url_for('chat', chat_id=chat_session.id))
+    return redirect(url_for('chat', chat_id=chat.id))
 
 @app.route('/chat/<int:chat_id>/delete', methods=['POST'])
 @login_required
 def delete_chat(chat_id):
-    chat_session = ChatSession.query.filter_by(id=chat_id, user_id=current_user.id).first_or_404()
-    db.session.delete(chat_session)
+    chat = ChatSession.query.get(chat_id)
+    if not chat:
+        flash('Chat not found', 'error')
+        return redirect(url_for('chat'))
+    
+    if chat.user_id != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
+    
+    db.session.delete(chat)
     db.session.commit()
     return redirect(url_for('chat'))
 
-@app.route('/models', methods=['GET', 'POST'])
+@app.route('/chat/<int:chat_id>/rename', methods=['POST'])
 @login_required
-def models():
-    form = ModelForm()
-    models = Model.query.all()
+def rename_chat(chat_id):
+    chat = ChatSession.query.get(chat_id)
+    if not chat:
+        flash('Chat not found', 'error')
+        return redirect(url_for('chat'))
+        
+    if chat.user_id != current_user.id:
+        return jsonify({'error': 'Unauthorized'}), 403
     
-    if form.validate_on_submit():
-        model = Model(
-            name=form.name.data,
-            model_arn=form.model_arn.data,
-            is_default=False
-        )
-        db.session.add(model)
+    new_title = request.form.get('title')
+    if new_title:
+        chat.title = new_title
         db.session.commit()
-        flash('Model added successfully', 'success')
-        return redirect(url_for('models'))
     
-    return render_template('models.html', form=form, models=models)
+    return redirect(url_for('chat', chat_id=chat.id))
 
-@app.route('/models/<int:model_id>/default', methods=['POST'])
+@app.route('/api/chat', methods=['POST'])
 @login_required
-def set_default_model(model_id):
-    # Reset all models to non-default
-    Model.query.update({Model.is_default: False})
+def process_message():
+    data = request.json
+    chat_id = data.get('chat_id')
+    message_content = data.get('message')
+    model_id = data.get('model_id')
     
-    # Set the selected model as default
-    model = Model.query.get_or_404(model_id)
-    model.is_default = True
+    if not chat_id or not message_content:
+        return jsonify({'error': 'Missing required parameters'}), 400
+    
+    chat = db.session.get(ChatSession, chat_id)
+    if not chat or chat.user_id != current_user.id:
+        return jsonify({'error': 'Chat not found or unauthorized'}), 404
+    
+    # Save user message
+    user_message = Message(
+        chat_session_id=chat_id,
+        role='user',
+        content=message_content
+    )
+    db.session.add(user_message)
+    
+    # Update chat title if it's the first message
+    if len(chat.messages) == 0:
+        # Use the first ~30 chars of the message as the chat title
+        chat.title = message_content[:30] + ('...' if len(message_content) > 30 else '')
     
     db.session.commit()
-    flash(f'{model.name} set as default model', 'success')
-    return redirect(url_for('models'))
+    
+    # Get model to use
+    model = None
+    if model_id:
+        model = db.session.get(Model, model_id)
+    if not model:
+        model = Model.query.filter_by(is_default=True).first()
+    
+    if not model:
+        return jsonify({'error': 'No model available'}), 500
+    
+    # Get chat history for context
+    history = Message.query.filter_by(chat_session_id=chat_id).order_by(Message.timestamp).all()
+    messages = []
+    
+    for msg in history:
+        messages.append({
+            "role": msg.role,
+            "content": msg.content
+        })
+    
+    try:
+        # Call AWS Bedrock
+        bedrock_client = get_bedrock_client()
+        
+        # Check if model is Anthropic (Claude)
+        if "anthropic" in model.model_arn.lower():
+            # Format request based on Claude's API
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 4096,
+                "messages": messages
+            }
+            
+            # Log the model being used
+            logging.info(f"Using Claude model: {model.model_arn}")
+        else:
+            # Generic format for other models
+            request_body = {
+                "prompt": "\n\n".join([f"{msg['role']}: {msg['content']}" for msg in messages]),
+                "max_tokens": 4096
+            }
+            
+            # Log the model being used
+            logging.info(f"Using non-Claude model: {model.model_arn}")
+        
+        # Try model invocation with inference profile support
+        try:
+            # First try direct model invocation
+            response = bedrock_client.invoke_model(
+                modelId=model.model_arn,
+                body=json.dumps(request_body)
+            )
+            response_body = json.loads(response.get('body').read())
+        except Exception as invoke_error:
+            # If error mentions inference profile, try to extract the model ID
+            error_msg = str(invoke_error)
+            if "inference profile" in error_msg.lower():
+                # Log the error for debugging
+                logging.error(f"Inference profile error: {error_msg}")
+                
+                # Check if the model ARN contains a model ID we can use
+                if "anthropic.claude-opus-4" in model.model_arn.lower():
+                    # Create an inference profile ARN using the model ID
+                    # Format: arn:aws:bedrock:[region]:[account-id]:inference-profile/[profile-name]
+                    # For testing, we'll use a placeholder inference profile name
+                    inference_profile = f"inference-profile-{model.model_arn.split(':')[-1]}"
+                    
+                    # Try again with the inference profile
+                    response = bedrock_client.invoke_model(
+                        modelId=inference_profile,
+                        body=json.dumps(request_body)
+                    )
+                    response_body = json.loads(response.get('body').read())
+                else:
+                    # Re-raise the original error if we can't handle it
+                    raise invoke_error
+            else:
+                # Re-raise the original error for other types of errors
+                raise invoke_error
+        
+        # Handle different response formats
+        if "anthropic" in model.model_arn.lower():
+            assistant_response = response_body.get('content')[0].get('text')
+        else:
+            # Generic handling for other models
+            assistant_response = response_body.get('generation', response_body.get('output', response_body.get('text', str(response_body))))
+        
+        # Save assistant response
+        assistant_message = Message(
+            chat_session_id=chat_id,
+            role='assistant',
+            content=assistant_response
+        )
+        db.session.add(assistant_message)
+        db.session.commit()
+        
+        return jsonify({
+            'response': assistant_response,
+            'chat_id': chat_id
+        })
+        
+    except Exception as e:
+        logging.error(f"Error calling Bedrock: {str(e)}", exc_info=True)
+        error_message = str(e)
+        
+        # Show a more helpful error message for inference profile errors
+        if "inference profile" in error_message.lower():
+            error_message = "This model (Claude Opus 4) requires an inference profile. Please create an inference profile in the AWS Bedrock console and use the complete inference profile ARN instead of the model ID. Format should be: arn:aws:bedrock:[region]:[account-id]:inference-profile/[profile-name]"
+        
+        return jsonify({'error': error_message}), 500
+
+@app.route('/models', methods=['GET'])
+@login_required
+def list_models():
+    models = Model.query.all()
+    return render_template('models.html', models=models)
+
+@app.route('/models/add', methods=['POST'])
+@login_required
+def add_model():
+    name = request.form.get('name')
+    model_arn = request.form.get('model_arn')
+    is_default = request.form.get('is_default') == 'on'
+    
+    if not name or not model_arn:
+        flash('Name and Model ARN are required', 'error')
+        return redirect(url_for('list_models'))
+        
+    # Add a warning if adding Claude Opus 4 without an inference profile
+    if "claude-opus-4" in model_arn.lower() and "inference-profile" not in model_arn.lower():
+        flash('Warning: Claude Opus 4 requires an inference profile. Please use the complete inference profile ARN instead of just the model ID.', 'warning')
+    
+    # If this model is set as default, unset any existing default
+    if is_default:
+        Model.query.filter_by(is_default=True).update({'is_default': False})
+    
+    model = Model(name=name, model_arn=model_arn, is_default=is_default)
+    db.session.add(model)
+    db.session.commit()
+    
+    flash(f'Model {name} added successfully', 'success')
+    return redirect(url_for('list_models'))
 
 @app.route('/models/<int:model_id>/delete', methods=['POST'])
 @login_required
 def delete_model(model_id):
-    model = Model.query.get_or_404(model_id)
+    model = Model.query.get(model_id)
+    if not model:
+        flash('Model not found', 'error')
+        return redirect(url_for('list_models'))
+    
+    # Don't allow deleting the last model
+    if Model.query.count() <= 1:
+        flash('Cannot delete the last model', 'error')
+        return redirect(url_for('list_models'))
+    
+    # If deleting the default model, set another one as default
+    if model.is_default:
+        other_model = Model.query.filter(Model.id != model_id).first()
+        if other_model:
+            other_model.is_default = True
+    
     db.session.delete(model)
     db.session.commit()
-    flash('Model deleted successfully', 'success')
-    return redirect(url_for('models'))
+    
+    flash(f'Model {model.name} deleted', 'info')
+    return redirect(url_for('list_models'))
 
-def get_bedrock_response(prompt, message_history, selected_model):
-    """Get a response from AWS Bedrock"""
-    aws_access_key = os.environ.get('AWS_ACCESS_KEY_ID')
-    aws_secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+@app.route('/models/<int:model_id>/set_default', methods=['POST'])
+@login_required
+def set_default_model(model_id):
+    # Unset current default
+    Model.query.filter_by(is_default=True).update({'is_default': False})
     
-    if not aws_access_key or not aws_secret_key:
-        raise Exception("AWS credentials not found in environment variables")
-    
-    # Create a Bedrock client
-    bedrock_client = boto3.client(
-        service_name='bedrock-runtime',
-        region_name=AWS_REGION,
-        aws_access_key_id=aws_access_key,
-        aws_secret_access_key=aws_secret_key
-    )
-    
-    # Prepare message history for the model
-    messages = []
-    
-    # Add message history
-    for msg in message_history:
-        if msg.role == 'user':
-            messages.append({"role": "user", "content": msg.content})
-        elif msg.role == 'assistant':
-            messages.append({"role": "assistant", "content": msg.content})
-    
-    # Add the current prompt
-    messages.append({"role": "user", "content": prompt})
-    
-    model_id = selected_model.model_arn if selected_model else DEFAULT_MODEL
-    
-    # Determine if this is an Anthropic Claude model
-    if "anthropic" in model_id.lower():
-        # Claude API format
-        request_body = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 4096,
-            "messages": messages
-        }
-    else:
-        # Generic format for other models (may need adjustment for specific models)
-        request_body = {
-            "prompt": "\n".join([f"{m['role']}: {m['content']}" for m in messages]),
-            "max_tokens": 4096
-        }
-    
-    response = bedrock_client.invoke_model(
-        modelId=model_id,
-        body=json.dumps(request_body)
-    )
-    
-    response_body = json.loads(response.get('body').read())
-    
-    # Extract the response text based on model type
-    if "anthropic" in model_id.lower():
-        return response_body.get('content', [{}])[0].get('text', 'No response')
-    else:
-        return response_body.get('completion', 'No response')
-
-# Initialize the database and create admin user
-def initialize_app():
-    try:
-        # Create admin user if it doesn't exist
-        admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-        admin_password = os.environ.get('ADMIN_PASSWORD')
+    # Set new default
+    model = Model.query.get(model_id)
+    if not model:
+        flash('Model not found', 'error')
+        return redirect(url_for('list_models'))
         
-        if admin_password:
-            try:
-                admin = User.query.filter_by(username=admin_username).first()
-                if not admin:
-                    admin = User(username=admin_username)
-                    admin.set_password(admin_password)
-                    db.session.add(admin)
-                    db.session.commit()
-            except Exception as e:
-                db.session.rollback()
-                app.logger.error(f"Error creating admin user: {str(e)}")
-        
-        # Add default model if no models exist
-        try:
-            model_exists = db.session.query(Model).first() is not None
-            if not model_exists:
-                default_model = Model(
-                    name=DEFAULT_MODEL_NAME,
-                    model_arn=DEFAULT_MODEL,
-                    is_default=True
-                )
-                db.session.add(default_model)
-                db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            app.logger.error(f"Error creating default model: {str(e)}")
-    except Exception as e:
-        app.logger.error(f"Error in initialize_app: {str(e)}")
-
-# Initialize the app when it starts
-with app.app_context():
-    try:
-        db.create_all()
-    except Exception as e:
-        # Tables may already exist
-        app.logger.warning(f"Could not create tables: {str(e)}")
+    model.is_default = True
+    db.session.commit()
     
-    # Reset the session to clear any errors
-    db.session.remove()
-    initialize_app()
+    flash(f'{model.name} set as default model', 'success')
+    return redirect(url_for('list_models'))
 
-# Debug route to check users (remove in production)
-@app.route('/debug/users')
-def debug_users():
-    users = User.query.all()
-    result = [{'id': user.id, 'username': user.username} for user in users]
-    return {'users': result}
-
-# For local development
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        # Create admin user if it doesn't exist
-        admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
-        admin_password = os.environ.get('ADMIN_PASSWORD', 'password')  # Default for local dev only
-        
-        admin = User.query.filter_by(username=admin_username).first()
-        if not admin:
-            admin = User(username=admin_username)
-            admin.set_password(admin_password)
-            db.session.add(admin)
-            
-        # Add default model if no models exist
-        if Model.query.count() == 0:
-            default_model = Model(
-                name=DEFAULT_MODEL_NAME,
-                model_arn=DEFAULT_MODEL,
-                is_default=True
-            )
-            db.session.add(default_model)
-            
-        db.session.commit()
-        
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5004))
+    app.run(host='0.0.0.0', port=port)

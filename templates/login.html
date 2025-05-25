@@ -1,46 +1,30 @@
-{% extends "layout.html" %}
+{% extends "base.html" %}
 
 {% block title %}Login - AWS Bedrock Chat{% endblock %}
 
 {% block content %}
-<div class="container py-5">
-    <div class="row justify-content-center">
-        <div class="col-md-6 col-lg-5">
-            <div class="card shadow">
-                <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0">Login</h4>
+<div class="container" style="max-width: 500px; margin: 64px auto;">
+    <div class="mdc-card">
+        <div style="padding: 16px; background-color: var(--md-primary); color: white;">
+            <h2 style="margin: 0;">Login</h2>
+        </div>
+        <div style="padding: 24px;">
+            <form method="post">
+                <div class="mdc-text-field">
+                    <label class="mdc-text-field__label" for="username">Username</label>
+                    <input type="text" class="mdc-text-field__input" id="username" name="username" required>
                 </div>
-                <div class="card-body">
-                    <form method="POST" action="{{ url_for('login') }}">
-                        {{ form.hidden_tag() }}
-                        <div class="mb-3">
-                            {{ form.username.label(class="form-label") }}
-                            {{ form.username(class="form-control") }}
-                            {% if form.username.errors %}
-                                <div class="invalid-feedback d-block">
-                                    {% for error in form.username.errors %}
-                                        {{ error }}
-                                    {% endfor %}
-                                </div>
-                            {% endif %}
-                        </div>
-                        <div class="mb-3">
-                            {{ form.password.label(class="form-label") }}
-                            {{ form.password(class="form-control") }}
-                            {% if form.password.errors %}
-                                <div class="invalid-feedback d-block">
-                                    {% for error in form.password.errors %}
-                                        {{ error }}
-                                    {% endfor %}
-                                </div>
-                            {% endif %}
-                        </div>
-                        <div class="d-grid">
-                            {{ form.submit(class="btn btn-primary") }}
-                        </div>
-                    </form>
+                
+                <div class="mdc-text-field">
+                    <label class="mdc-text-field__label" for="password">Password</label>
+                    <input type="password" class="mdc-text-field__input" id="password" name="password" required>
                 </div>
-            </div>
+                
+                <button type="submit" class="mdc-button mdc-button--raised" style="margin-top: 16px;">
+                    <span class="mdc-button__ripple"></span>
+                    <span class="mdc-button__label">Login</span>
+                </button>
+            </form>
         </div>
     </div>
 </div>
