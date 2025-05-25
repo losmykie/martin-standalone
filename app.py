@@ -313,7 +313,10 @@ def get_bedrock_response(prompt, message_history, selected_model):
 
 # Initialize the database and create admin user
 def initialize_app():
-    db.create_all()
+    # Check if tables exist before creating them
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table('user'):
+        db.create_all()
     
     # Create admin user if it doesn't exist
     admin_username = os.environ.get('ADMIN_USERNAME', 'admin')
